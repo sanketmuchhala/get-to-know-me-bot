@@ -1,160 +1,155 @@
 # backend/chat_engine.py
 """
-Configures the ConversationalRetrievalChain with:
-  - Gemini 2.0 Flash as the LLM (via langchain-google-genai)
-  - all-MiniLM-L6-v2 embeddings — free, local, no API cost
-  - ChromaDB as the persistent vector store
-  - ConversationBufferMemory for natural multi-turn conversations
+Chat engine using a direct LCEL chain — one LLM call per question.
 
-Note: In LangChain 1.x, ConversationalRetrievalChain and
-ConversationBufferMemory live in the `langchain_classic` package.
+ConversationalRetrievalChain made two calls (condense + answer), doubling
+token usage and hitting free-tier rate limits twice as fast. This version:
+  - Retrieves relevant chunks from ChromaDB directly
+  - Passes context + history into a single ChatPromptTemplate
+  - Makes exactly ONE Gemini call per question
+  - Fails fast (max_retries=1) instead of retrying for 5 minutes
 """
 
 import os
+import warnings
+import logging
+
+warnings.filterwarnings("ignore", category=DeprecationWarning)
+for _log in ("langchain", "langchain_core", "langchain_classic"):
+    logging.getLogger(_log).setLevel(logging.ERROR)
+
 from typing import Optional
 
 from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_classic.chains import ConversationalRetrievalChain
-from langchain_classic.memory import ConversationBufferMemory
-from langchain_core.prompts import PromptTemplate
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+from langchain_core.messages import HumanMessage, AIMessage
+from langchain_core.output_parsers import StrOutputParser
 
 from backend.vector_store import load_vector_store
 
 
-# ── System persona & prompt ───────────────────────────────────────────────────
+# ── Persona ───────────────────────────────────────────────────────────────────
 
-_SYSTEM_CONTEXT = (
+_SYSTEM = (
     "You are an AI assistant representing Sanket Muchhala, an AI & Machine Learning Engineer. "
-    "Your job is to accurately and professionally answer questions about Sanket's experience, "
-    "technical skills (including RAG, Agentic architectures, LLMs), and background using ONLY "
-    "the provided resume context. "
-    "Be concise, warm, and professional — like a knowledgeable colleague. "
-    "If a question falls outside the resume context, politely explain you can only speak to "
-    "what is on the resume and invite the visitor to connect with Sanket directly on LinkedIn "
-    "(linkedin.com/in/sanketmuchhala)."
+    "Answer questions about Sanket's experience, technical skills (RAG, Agentic AI, LLMs), "
+    "and background using ONLY the resume context provided below. "
+    "Be concise and professional. "
+    "If the answer is not in the resume context, say so briefly and invite the visitor to "
+    "connect with Sanket on LinkedIn (linkedin.com/in/sanketmuchhala).\n\n"
+    "Resume context:\n{context}"
 )
 
-# This prompt is injected into the StuffDocumentsChain that combines
-# retrieved resume chunks with the question.
-_QA_PROMPT_TEMPLATE = f"""{_SYSTEM_CONTEXT}
-
-Resume context:
-{{context}}
-
-Chat history:
-{{chat_history}}
-
-Visitor question: {{question}}
-
-Answer:"""
-
-_QA_PROMPT = PromptTemplate(
-    input_variables=["context", "chat_history", "question"],
-    template=_QA_PROMPT_TEMPLATE,
-)
+_PROMPT = ChatPromptTemplate.from_messages([
+    ("system", _SYSTEM),
+    MessagesPlaceholder(variable_name="chat_history"),
+    ("human", "{question}"),
+])
 
 
-# ── Factory function ──────────────────────────────────────────────────────────
+# ── Engine class ──────────────────────────────────────────────────────────────
 
-def get_chat_engine(google_api_key: Optional[str] = None) -> ConversationalRetrievalChain:
+class ChatEngine:
     """
-    Build and return a ready-to-use ConversationalRetrievalChain.
+    Thin wrapper around a retriever + LCEL chain.
 
-    The chain:
-    1. Reformulates follow-up questions into standalone queries (condense step)
-    2. Retrieves the top-3 most relevant resume chunks from ChromaDB
-    3. Passes chunks + conversation history to Gemini 2.0 Flash with the persona prompt
-    4. Persists the exchange in memory for follow-up awareness
+    Usage:
+        engine = ChatEngine(api_key)
+        result = engine.invoke("Where does Sanket work?", history=[...])
+        print(result["answer"])
+        print(result["source_documents"])
+    """
+
+    def __init__(self, api_key: str):
+        llm = ChatGoogleGenerativeAI(
+            model="gemini-2.0-flash",
+            google_api_key=api_key,
+            temperature=0.2,
+            max_retries=1,        # fail fast — don't retry for 5 minutes
+            convert_system_message_to_human=True,
+        )
+
+        vectorstore = load_vector_store()
+        self._retriever = vectorstore.as_retriever(
+            search_type="similarity",
+            search_kwargs={"k": 3},
+        )
+
+        self._chain = _PROMPT | llm | StrOutputParser()
+
+    def invoke(self, question: str, history: list = None) -> dict:
+        """
+        Args:
+            question: The current user question.
+            history:  List of prior {"role": "user"/"assistant", "content": str} dicts.
+
+        Returns:
+            {"answer": str, "source_documents": list[Document]}
+        """
+        # Convert history dicts → LangChain message objects
+        lc_history = []
+        for msg in (history or []):
+            if msg["role"] == "user":
+                lc_history.append(HumanMessage(content=msg["content"]))
+            elif msg["role"] == "assistant":
+                lc_history.append(AIMessage(content=msg["content"]))
+
+        # Retrieve relevant resume chunks
+        source_docs = self._retriever.invoke(question)
+        context = "\n\n".join(doc.page_content for doc in source_docs)
+
+        # Single LLM call
+        answer = self._chain.invoke({
+            "question": question,
+            "chat_history": lc_history,
+            "context": context,
+        })
+
+        return {"answer": answer, "source_documents": source_docs}
+
+
+# ── Factory ───────────────────────────────────────────────────────────────────
+
+def get_chat_engine(google_api_key: Optional[str] = None) -> ChatEngine:
+    """
+    Build and return a ChatEngine instance.
 
     Args:
-        google_api_key: Google Generative AI API key. If None, reads from
-                        the GOOGLE_API_KEY environment variable.
-
-    Returns:
-        Configured ConversationalRetrievalChain. Call with:
-            result = chain.invoke({"question": "..."})
-            answer = result["answer"]
-            sources = result["source_documents"]
+        google_api_key: If None, reads GOOGLE_API_KEY from the environment.
 
     Raises:
-        EnvironmentError: If no Google API key is found.
-        FileNotFoundError: If the ChromaDB vector store has not been built yet.
+        EnvironmentError: No API key found.
+        FileNotFoundError: ChromaDB not built yet — run python3 -m backend.vector_store
     """
-    # ── 1. Resolve API key ────────────────────────────────────────────────────
     api_key = google_api_key or os.getenv("GOOGLE_API_KEY")
     if not api_key:
         raise EnvironmentError(
             "No Google API key found.\n"
-            "Set GOOGLE_API_KEY in your .env file or pass it to get_chat_engine().\n"
+            "Set GOOGLE_API_KEY in your .env file.\n"
             "Get a free key at: https://aistudio.google.com/app/apikey"
         )
-
-    # ── 2. LLM: Gemini 2.0 Flash ─────────────────────────────────────────────
-    # gemini-1.5-pro was removed from the v1beta API; gemini-2.0-flash is
-    # the current stable model available on free and paid tiers.
-    llm = ChatGoogleGenerativeAI(
-        model="gemini-2.0-flash",
-        google_api_key=api_key,
-        temperature=0.2,          # Low temperature → factual, professional answers
-        convert_system_message_to_human=True,  # Required: Gemini rejects system role
-    )
-
-    # ── 3. Retriever: top-3 chunks from ChromaDB ─────────────────────────────
-    vectorstore = load_vector_store()
-    retriever = vectorstore.as_retriever(
-        search_type="similarity",
-        search_kwargs={"k": 3},
-    )
-
-    # ── 4. Memory: tracks conversation turns ─────────────────────────────────
-    # output_key="answer" prevents ambiguity when return_source_documents=True
-    # return_messages=False keeps history as a plain string (required by PromptTemplate)
-    memory = ConversationBufferMemory(
-        memory_key="chat_history",
-        output_key="answer",
-        return_messages=False,
-    )
-
-    # ── 5. Build the chain ────────────────────────────────────────────────────
-    chain = ConversationalRetrievalChain.from_llm(
-        llm=llm,
-        retriever=retriever,
-        memory=memory,
-        combine_docs_chain_kwargs={"prompt": _QA_PROMPT},
-        return_source_documents=True,
-        output_key="answer",
-        verbose=False,
-    )
-
-    return chain
+    return ChatEngine(api_key)
 
 
 # ── Smoke test ────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
-    """
-    Quick end-to-end test.
-    Requires GOOGLE_API_KEY to be set in .env or environment.
-
-    Run:
-        python3 -m backend.chat_engine
-    """
     from dotenv import load_dotenv
-
     load_dotenv()
 
-    print("Initializing chat engine (loading embeddings + ChromaDB)...")
-    chain = get_chat_engine()
-    print("✓ Chat engine ready\n")
+    print("Initializing chat engine...")
+    engine = get_chat_engine()
+    print("Ready.\n")
 
-    test_questions = [
-        "Where does Sanket currently work?",
-        "What AI and machine learning skills does he have?",
-        "Tell me about his education.",
-    ]
+    q1 = "Where does Sanket currently work?"
+    r1 = engine.invoke(q1)
+    print(f"Q: {q1}")
+    print(f"A: {r1['answer']}\n")
 
-    for q in test_questions:
-        print(f"Q: {q}")
-        result = chain.invoke({"question": q})
-        print(f"A: {result['answer'][:300]}")
-        print(f"   (Sources: {len(result.get('source_documents', []))} chunks)")
-        print()
+    q2 = "What did he do there?"
+    r2 = engine.invoke(q2, history=[
+        {"role": "user",      "content": q1},
+        {"role": "assistant", "content": r1["answer"]},
+    ])
+    print(f"Q: {q2}")
+    print(f"A: {r2['answer']}\n")
+    print(f"Sources: {len(r2['source_documents'])} chunks")

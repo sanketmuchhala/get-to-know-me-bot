@@ -280,11 +280,14 @@ if st.session_state.chain is None:
 
 # ── Response helper ───────────────────────────────────────────────────────────
 def _respond(question: str) -> None:
-    """Call the chain, display the answer, and append it to session state."""
+    """Call the chat engine, display the answer, and append it to session state."""
     with st.chat_message("assistant"):
         with st.spinner("Thinking..."):
             try:
-                result = st.session_state.chain.invoke({"question": question})
+                # Pass all prior messages as history (exclude the current question
+                # which is already the last item in session_state.messages)
+                history = st.session_state.messages[:-1]
+                result = st.session_state.chain.invoke(question, history=history)
                 answer = result["answer"]
                 source_docs = result.get("source_documents", [])
 
