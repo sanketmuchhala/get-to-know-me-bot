@@ -1,108 +1,186 @@
 # app.py
 """
 "Get to Know Me" — Portfolio Chatbot for Sanket Muchhala
-A Streamlit app that lets visitors have a conversation with Sanket's resume.
-
-Run:
-    streamlit run app.py
-
-Required environment variables (set in .env or shell):
-    GOOGLE_API_KEY  — Google Generative AI key for Gemini 1.5 Pro
-                      Get one free at: https://aistudio.google.com/app/apikey
+Run: streamlit run app.py
+Requires: GOOGLE_API_KEY in .env  (https://aistudio.google.com/app/apikey)
 """
 
 import os
 import sys
+import warnings
+import logging
 from pathlib import Path
 
-# ── Environment setup (printed to terminal at startup) ────────────────────────
-print("=" * 60)
-print("  Get to Know Me — Portfolio Chatbot for Sanket Muchhala")
-print("=" * 60)
-print()
-print("Required environment variables:")
-print("  GOOGLE_API_KEY  — Gemini 1.5 Pro API key")
-print("                    Get free key: https://aistudio.google.com/app/apikey")
-print("                    Set in .env file:  GOOGLE_API_KEY=your_key_here")
-print()
-print("App will open at: http://localhost:8501")
-print("=" * 60)
+# ── Silence noisy third-party warnings before any imports ────────────────────
+os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
+os.environ.setdefault("TRANSFORMERS_VERBOSITY", "error")
+
+warnings.filterwarnings("ignore", category=UserWarning)
+warnings.filterwarnings("ignore", category=FutureWarning)
+warnings.filterwarnings("ignore", category=DeprecationWarning)
+
+for _noisy_logger in (
+    "sentence_transformers", "transformers", "chromadb",
+    "langchain", "langchain_core", "langchain_classic",
+    "httpx", "urllib3", "torch",
+):
+    logging.getLogger(_noisy_logger).setLevel(logging.ERROR)
+
+# ── Terminal startup info ─────────────────────────────────────────────────────
+print("=" * 55)
+print("  Get to Know Me  |  Sanket Muchhala Portfolio Bot")
+print("=" * 55)
+print("  GOOGLE_API_KEY  — required (Gemini 1.5 Pro)")
+print("  Get one free:   https://aistudio.google.com/app/apikey")
+print("  Set in .env:    GOOGLE_API_KEY=your_key_here")
+print("=" * 55)
 print()
 
 from dotenv import load_dotenv
 import streamlit as st
 
-# Load .env for local development (no-op if running in cloud with env vars set)
 load_dotenv()
 
-# ── Page config (must be the first Streamlit call) ────────────────────────────
+# ── Page config ───────────────────────────────────────────────────────────────
 st.set_page_config(
-    page_title="Chat with Sanket | AI/ML Engineer",
-    page_icon="🤖",
+    page_title="Sanket Muchhala — AI/ML Engineer",
+    page_icon="S",
     layout="centered",
     initial_sidebar_state="expanded",
 )
 
-# ── Custom CSS ────────────────────────────────────────────────────────────────
+# ── CSS ───────────────────────────────────────────────────────────────────────
 st.markdown("""
 <style>
-    /* Sidebar styling */
+    /* ── Global ── */
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+    html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
+
+    /* ── Sidebar ── */
     section[data-testid="stSidebar"] {
-        background: linear-gradient(180deg, #1a1a2e 0%, #16213e 100%);
+        background: #0f1117;
+        border-right: 1px solid #1e2130;
     }
-    section[data-testid="stSidebar"] * {
-        color: #e0e0e0 !important;
+    section[data-testid="stSidebar"] .stMarkdown p,
+    section[data-testid="stSidebar"] .stMarkdown h1,
+    section[data-testid="stSidebar"] .stMarkdown h2,
+    section[data-testid="stSidebar"] .stMarkdown h3,
+    section[data-testid="stSidebar"] .stMarkdown li {
+        color: #c9d1d9 !important;
     }
     section[data-testid="stSidebar"] a {
-        color: #64b5f6 !important;
+        color: #58a6ff !important;
+        text-decoration: none;
+    }
+    section[data-testid="stSidebar"] a:hover {
+        text-decoration: underline;
     }
 
-    /* Skill badge */
-    .skill-badge {
-        display: inline-block;
-        background: rgba(100, 181, 246, 0.15);
-        border: 1px solid rgba(100, 181, 246, 0.3);
-        color: #90caf9;
-        border-radius: 20px;
-        padding: 3px 12px;
-        font-size: 0.78rem;
-        margin: 3px 2px;
-    }
-
-    /* Welcome header */
-    .welcome-header {
-        background: linear-gradient(135deg, #1565c0 0%, #6a1b9a 100%);
-        color: white;
-        border-radius: 16px;
-        padding: 1.8rem 2rem;
-        margin-bottom: 1.5rem;
-        text-align: center;
-    }
-    .welcome-header h1 {
-        margin: 0 0 0.4rem 0;
-        font-size: 1.6rem;
-    }
-    .welcome-header p {
+    /* ── Name block ── */
+    .profile-name {
+        font-size: 1.25rem;
+        font-weight: 700;
+        color: #f0f6fc;
+        letter-spacing: -0.3px;
         margin: 0;
-        opacity: 0.88;
-        font-size: 0.95rem;
+    }
+    .profile-title {
+        font-size: 0.82rem;
+        color: #8b949e;
+        margin: 2px 0 0 0;
+        letter-spacing: 0.3px;
+        text-transform: uppercase;
     }
 
-    /* Suggestion button row */
-    div[data-testid="stHorizontalBlock"] .stButton button {
-        background: #f8f9ff;
-        border: 1px solid #e3e8ff;
-        border-radius: 10px;
-        font-size: 0.85rem;
-        color: #3c4a6e;
-        padding: 0.5rem 0.8rem;
+    /* ── Sidebar section label ── */
+    .sidebar-label {
+        font-size: 0.7rem;
+        font-weight: 600;
+        letter-spacing: 0.8px;
+        text-transform: uppercase;
+        color: #484f58 !important;
+        margin: 16px 0 4px 0;
+    }
+
+    /* ── Skill pill ── */
+    .skill-pill {
+        display: inline-block;
+        background: #161b22;
+        border: 1px solid #30363d;
+        color: #8b949e;
+        border-radius: 4px;
+        padding: 2px 8px;
+        font-size: 0.72rem;
+        margin: 2px 2px 2px 0;
+        font-family: 'Inter', monospace;
+    }
+
+    /* ── Hero banner ── */
+    .hero {
+        background: #0f1117;
+        border: 1px solid #1e2130;
+        border-radius: 12px;
+        padding: 2rem 2.2rem 1.8rem;
+        margin-bottom: 1.5rem;
+    }
+    .hero-name {
+        font-size: 1.5rem;
+        font-weight: 700;
+        color: #f0f6fc;
+        margin: 0 0 4px 0;
+    }
+    .hero-sub {
+        font-size: 0.9rem;
+        color: #8b949e;
+        margin: 0;
+        line-height: 1.5;
+    }
+
+    /* ── Suggestion buttons ── */
+    div[data-testid="stHorizontalBlock"] .stButton > button {
+        background: #0f1117;
+        border: 1px solid #30363d;
+        border-radius: 8px;
+        font-size: 0.82rem;
+        color: #8b949e;
+        padding: 0.55rem 0.9rem;
         text-align: left;
         width: 100%;
-        transition: background 0.2s;
+        transition: border-color 0.15s, color 0.15s;
+        font-family: 'Inter', sans-serif;
     }
-    div[data-testid="stHorizontalBlock"] .stButton button:hover {
-        background: #e8edff;
-        border-color: #7b8ae0;
+    div[data-testid="stHorizontalBlock"] .stButton > button:hover {
+        border-color: #58a6ff;
+        color: #c9d1d9;
+        background: #161b22;
+    }
+
+    /* ── Clear button ── */
+    .stButton > button[kind="secondary"] {
+        background: transparent;
+        border: 1px solid #30363d;
+        color: #8b949e;
+        border-radius: 6px;
+        font-size: 0.8rem;
+    }
+
+    /* ── Chat messages ── */
+    .stChatMessage {
+        border-radius: 10px;
+    }
+
+    /* ── Expander ── */
+    .streamlit-expanderHeader {
+        font-size: 0.82rem;
+        color: #8b949e;
+    }
+
+    /* ── Footer ── */
+    .sidebar-footer {
+        font-size: 0.68rem;
+        color: #484f58;
+        margin-top: 1.5rem;
+        line-height: 1.6;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -110,53 +188,51 @@ st.markdown("""
 
 # ── Sidebar ───────────────────────────────────────────────────────────────────
 with st.sidebar:
-    st.markdown("## Sanket Muchhala")
-    st.markdown("**AI/ML Engineer** · 3+ years")
-    st.markdown("---")
-
-    st.markdown("**🏢 Current Role**")
-    st.markdown("AI Engineer @ Progressive Insurance")
-    st.markdown("*(May 2024 – Present)*")
-
-    st.markdown("**🎓 Education**")
-    st.markdown("MS Data Science — Indiana University")
-    st.markdown("B.Tech IT — Thakur College of Engineering")
-
-    st.markdown("**⚡ Skills**")
-    skills = [
-        "Python", "LangChain", "RAG", "Agentic AI",
-        "TensorFlow", "PyTorch", "AWS", "Azure",
-        "ChromaDB", "FastAPI", "MLflow", "Apache Airflow",
-    ]
     st.markdown(
-        " ".join(f'<span class="skill-badge">{s}</span>' for s in skills),
+        '<p class="profile-name">Sanket Muchhala</p>'
+        '<p class="profile-title">AI / ML Engineer</p>',
         unsafe_allow_html=True,
     )
 
-    st.markdown("**🏅 Certifications**")
+    st.markdown('<p class="sidebar-label">Current Role</p>', unsafe_allow_html=True)
+    st.markdown("AI Engineer @ Progressive Insurance  \n*(May 2024 – Present)*")
+
+    st.markdown('<p class="sidebar-label">Education</p>', unsafe_allow_html=True)
     st.markdown(
-        "AWS ML Engineer · Azure AI-900 · Databricks GenAI"
+        "MS Data Science — Indiana University  \n"
+        "B.Tech IT — Thakur College of Engineering"
     )
 
-    st.markdown("---")
-    st.markdown("**🔗 Connect**")
+    st.markdown('<p class="sidebar-label">Skills</p>', unsafe_allow_html=True)
+    skills = [
+        "Python", "LangChain", "RAG", "Agentic AI",
+        "TensorFlow", "PyTorch", "AWS", "Azure",
+        "ChromaDB", "FastAPI", "MLflow", "Airflow",
+    ]
     st.markdown(
-        "[LinkedIn](https://linkedin.com/in/sanketmuchhala) &nbsp;|&nbsp; "
-        "[GitHub](https://github.com/sanketmuchhala) &nbsp;|&nbsp; "
+        "".join(f'<span class="skill-pill">{s}</span>' for s in skills),
+        unsafe_allow_html=True,
+    )
+
+    st.markdown('<p class="sidebar-label">Certifications</p>', unsafe_allow_html=True)
+    st.markdown("AWS ML Engineer · Azure AI-900 · Databricks GenAI")
+
+    st.markdown('<p class="sidebar-label">Connect</p>', unsafe_allow_html=True)
+    st.markdown(
+        "[LinkedIn](https://linkedin.com/in/sanketmuchhala) &nbsp;·&nbsp; "
+        "[GitHub](https://github.com/sanketmuchhala) &nbsp;·&nbsp; "
         "[Website](https://sanketmuchhala.com)",
         unsafe_allow_html=True,
     )
 
     st.markdown("---")
-    if st.button("🗑️ Clear conversation", use_container_width=True):
+    if st.button("Clear conversation", use_container_width=True):
         st.session_state.messages = []
         st.session_state.chain = None
         st.rerun()
 
     st.markdown(
-        "<div style='font-size:0.72rem; opacity:0.5; margin-top:1rem;'>"
-        "Powered by Gemini 1.5 Pro + ChromaDB + LangChain"
-        "</div>",
+        '<p class="sidebar-footer">Gemini 1.5 Pro &nbsp;·&nbsp; ChromaDB &nbsp;·&nbsp; LangChain</p>',
         unsafe_allow_html=True,
     )
 
@@ -164,35 +240,23 @@ with st.sidebar:
 # ── API key guard ─────────────────────────────────────────────────────────────
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 if not GOOGLE_API_KEY:
-    st.error("⚠️ **GOOGLE_API_KEY not configured.**")
-    st.info(
-        "**To run this app:**\n\n"
-        "1. Get a free API key at https://aistudio.google.com/app/apikey\n"
-        "2. Create a `.env` file in this directory:\n"
-        "   ```\n"
-        "   GOOGLE_API_KEY=your_key_here\n"
-        "   ```\n"
-        "3. Restart the app:\n"
-        "   ```bash\n"
-        "   streamlit run app.py\n"
-        "   ```"
-    )
+    st.error("**GOOGLE_API_KEY not configured.** Add it to your `.env` file and restart.")
+    st.code("GOOGLE_API_KEY=your_key_here", language="bash")
+    st.caption("Get a free key at https://aistudio.google.com/app/apikey")
     st.stop()
 
 
 # ── Session state ─────────────────────────────────────────────────────────────
 if "messages" not in st.session_state:
     st.session_state.messages = []
-
 if "chain" not in st.session_state:
     st.session_state.chain = None
 
 
-# ── Load chain (once per session, not per message) ───────────────────────────
+# ── Load chain once per session ───────────────────────────────────────────────
 if st.session_state.chain is None:
-    # Auto-build vector store if chromadb_data/ is missing (first-run or fresh clone)
     if not Path("chromadb_data").exists():
-        with st.spinner("🔨 First-run setup: building knowledge base from resume…"):
+        with st.spinner("Building knowledge base from resume (first run)..."):
             try:
                 from backend.vector_store import build_vector_store
                 build_vector_store()
@@ -200,16 +264,12 @@ if st.session_state.chain is None:
                 st.error(f"Failed to build vector store: {e}")
                 st.stop()
 
-    with st.spinner("🧠 Loading Sanket's resume into memory…"):
+    with st.spinner("Loading..."):
         try:
             from backend.chat_engine import get_chat_engine
             st.session_state.chain = get_chat_engine(google_api_key=GOOGLE_API_KEY)
         except FileNotFoundError as e:
             st.error(str(e))
-            st.info(
-                "Rebuild the vector store manually:\n"
-                "```bash\npython3 -m backend.vector_store\n```"
-            )
             st.stop()
         except EnvironmentError as e:
             st.error(str(e))
@@ -219,48 +279,49 @@ if st.session_state.chain is None:
             st.stop()
 
 
-# ── Main chat UI ──────────────────────────────────────────────────────────────
+# ── Hero banner ───────────────────────────────────────────────────────────────
 st.markdown("""
-<div class="welcome-header">
-    <h1>💬 Ask me anything about Sanket</h1>
-    <p>I'm an AI trained on Sanket's resume. Ask about his experience,
-    technical skills, projects, or education.</p>
+<div class="hero">
+    <p class="hero-name">Ask me about Sanket</p>
+    <p class="hero-sub">
+        I'm an AI trained on Sanket's resume. Ask about his work experience,
+        technical skills, projects, or education.
+    </p>
 </div>
 """, unsafe_allow_html=True)
 
-# Suggested starter questions (only shown when conversation is fresh)
+
+# ── Suggestion buttons (fresh conversation only) ──────────────────────────────
 if not st.session_state.messages:
-    st.markdown("**Try one of these:**")
+    col1, col2 = st.columns(2)
     suggestions = [
         "Where does Sanket currently work?",
         "What AI/ML skills does he have?",
         "Tell me about his notable projects",
-        "What certifications does Sanket hold?",
+        "What certifications does he hold?",
     ]
-    col1, col2 = st.columns(2)
     for i, suggestion in enumerate(suggestions):
         col = col1 if i % 2 == 0 else col2
-        if col.button(suggestion, key=f"suggestion_{i}", use_container_width=True):
+        if col.button(suggestion, key=f"s{i}", use_container_width=True):
             st.session_state.messages.append({"role": "user", "content": suggestion})
             st.rerun()
+    st.write("")
 
-    st.markdown("")  # spacer
 
-# Render chat history
+# ── Chat history ──────────────────────────────────────────────────────────────
 for message in st.session_state.messages:
-    with st.chat_message(message["role"], avatar="🧑" if message["role"] == "user" else "🤖"):
+    with st.chat_message(message["role"]):
         st.markdown(message["content"])
 
-# Chat input box
-if prompt := st.chat_input("Ask about Sanket's background, skills, or experience…"):
-    # Add user message
+
+# ── Chat input ────────────────────────────────────────────────────────────────
+if prompt := st.chat_input("Ask about Sanket's background, skills, or experience..."):
     st.session_state.messages.append({"role": "user", "content": prompt})
-    with st.chat_message("user", avatar="🧑"):
+    with st.chat_message("user"):
         st.markdown(prompt)
 
-    # Generate and display assistant response
-    with st.chat_message("assistant", avatar="🤖"):
-        with st.spinner("Thinking…"):
+    with st.chat_message("assistant"):
+        with st.spinner("Thinking..."):
             try:
                 result = st.session_state.chain.invoke({"question": prompt})
                 answer = result["answer"]
@@ -268,23 +329,17 @@ if prompt := st.chat_input("Ask about Sanket's background, skills, or experience
 
                 st.markdown(answer)
 
-                # Collapsible source context (helpful for transparency)
                 if source_docs:
-                    with st.expander("📄 Resume context used", expanded=False):
+                    with st.expander("Resume context used", expanded=False):
                         for i, doc in enumerate(source_docs, 1):
                             page = doc.metadata.get("page", 0)
-                            st.markdown(f"**Chunk {i}** *(page {page + 1})*")
-                            st.text(doc.page_content[:300] + ("…" if len(doc.page_content) > 300 else ""))
+                            st.caption(f"Chunk {i}  ·  page {page + 1}")
+                            st.text(doc.page_content[:300] + ("..." if len(doc.page_content) > 300 else ""))
                             if i < len(source_docs):
                                 st.divider()
 
-                st.session_state.messages.append(
-                    {"role": "assistant", "content": answer}
-                )
+                st.session_state.messages.append({"role": "assistant", "content": answer})
 
             except Exception as exc:
-                error_msg = f"Something went wrong: {exc}"
-                st.error(error_msg)
-                st.session_state.messages.append(
-                    {"role": "assistant", "content": error_msg}
-                )
+                st.error(f"Something went wrong: {exc}")
+                st.session_state.messages.append({"role": "assistant", "content": f"Error: {exc}"})

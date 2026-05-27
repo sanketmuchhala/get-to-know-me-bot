@@ -7,6 +7,19 @@ Run standalone to build the database:
     python3 -m backend.vector_store
 """
 
+import os
+import warnings
+import logging
+
+# Silence noisy optional-dependency warnings (torchvision, torchaudio, etc.)
+os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
+os.environ.setdefault("TRANSFORMERS_VERBOSITY", "error")
+warnings.filterwarnings("ignore", category=UserWarning)
+warnings.filterwarnings("ignore", category=FutureWarning)
+warnings.filterwarnings("ignore", category=DeprecationWarning)
+for _log in ("sentence_transformers", "transformers", "chromadb", "torch"):
+    logging.getLogger(_log).setLevel(logging.ERROR)
+
 from pathlib import Path
 from typing import List
 
