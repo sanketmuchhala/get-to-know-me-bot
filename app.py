@@ -6,7 +6,6 @@ Requires: GOOGLE_API_KEY in .env  (https://aistudio.google.com/app/apikey)
 """
 
 import os
-import sys
 import warnings
 import logging
 from pathlib import Path
@@ -341,5 +340,14 @@ if prompt := st.chat_input("Ask about Sanket's background, skills, or experience
                 st.session_state.messages.append({"role": "assistant", "content": answer})
 
             except Exception as exc:
-                st.error(f"Something went wrong: {exc}")
-                st.session_state.messages.append({"role": "assistant", "content": f"Error: {exc}"})
+                err = str(exc)
+                if "429" in err or "RESOURCE_EXHAUSTED" in err:
+                    msg = "Rate limit reached — please wait a moment and try again."
+                elif "404" in err or "NOT_FOUND" in err:
+                    msg = "Model not found. Check your API key or contact support."
+                elif "403" in err or "PERMISSION_DENIED" in err:
+                    msg = "API key does not have permission. Check your Google AI Studio settings."
+                else:
+                    msg = f"Something went wrong: {exc}"
+                st.error(msg)
+                st.session_state.messages.append({"role": "assistant", "content": msg})

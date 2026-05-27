@@ -1,7 +1,7 @@
 # backend/chat_engine.py
 """
 Configures the ConversationalRetrievalChain with:
-  - Gemini 1.5 Pro as the LLM (via langchain-google-genai)
+  - Gemini 2.0 Flash as the LLM (via langchain-google-genai)
   - all-MiniLM-L6-v2 embeddings — free, local, no API cost
   - ChromaDB as the persistent vector store
   - ConversationBufferMemory for natural multi-turn conversations
@@ -63,7 +63,7 @@ def get_chat_engine(google_api_key: Optional[str] = None) -> ConversationalRetri
     The chain:
     1. Reformulates follow-up questions into standalone queries (condense step)
     2. Retrieves the top-3 most relevant resume chunks from ChromaDB
-    3. Passes chunks + conversation history to Gemini 1.5 Pro with the persona prompt
+    3. Passes chunks + conversation history to Gemini 2.0 Flash with the persona prompt
     4. Persists the exchange in memory for follow-up awareness
 
     Args:
@@ -89,9 +89,11 @@ def get_chat_engine(google_api_key: Optional[str] = None) -> ConversationalRetri
             "Get a free key at: https://aistudio.google.com/app/apikey"
         )
 
-    # ── 2. LLM: Gemini 1.5 Pro ───────────────────────────────────────────────
+    # ── 2. LLM: Gemini 2.0 Flash ─────────────────────────────────────────────
+    # gemini-1.5-pro was removed from the v1beta API; gemini-2.0-flash is
+    # the current stable model available on free and paid tiers.
     llm = ChatGoogleGenerativeAI(
-        model="gemini-1.5-pro",
+        model="gemini-2.0-flash",
         google_api_key=api_key,
         temperature=0.2,          # Low temperature → factual, professional answers
         convert_system_message_to_human=True,  # Required: Gemini rejects system role
