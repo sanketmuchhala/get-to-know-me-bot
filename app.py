@@ -231,7 +231,7 @@ with st.sidebar:
         st.rerun()
 
     st.markdown(
-        '<p class="sidebar-footer">Gemini 1.5 Pro &nbsp;·&nbsp; ChromaDB &nbsp;·&nbsp; LangChain</p>',
+        '<p class="sidebar-footer">Gemini 2.0 Flash &nbsp;·&nbsp; ChromaDB &nbsp;·&nbsp; LangChain</p>',
         unsafe_allow_html=True,
     )
 
@@ -278,51 +278,13 @@ if st.session_state.chain is None:
             st.stop()
 
 
-# ── Hero banner ───────────────────────────────────────────────────────────────
-st.markdown("""
-<div class="hero">
-    <p class="hero-name">Ask me about Sanket</p>
-    <p class="hero-sub">
-        I'm an AI trained on Sanket's resume. Ask about his work experience,
-        technical skills, projects, or education.
-    </p>
-</div>
-""", unsafe_allow_html=True)
-
-
-# ── Suggestion buttons (fresh conversation only) ──────────────────────────────
-if not st.session_state.messages:
-    col1, col2 = st.columns(2)
-    suggestions = [
-        "Where does Sanket currently work?",
-        "What AI/ML skills does he have?",
-        "Tell me about his notable projects",
-        "What certifications does he hold?",
-    ]
-    for i, suggestion in enumerate(suggestions):
-        col = col1 if i % 2 == 0 else col2
-        if col.button(suggestion, key=f"s{i}", use_container_width=True):
-            st.session_state.messages.append({"role": "user", "content": suggestion})
-            st.rerun()
-    st.write("")
-
-
-# ── Chat history ──────────────────────────────────────────────────────────────
-for message in st.session_state.messages:
-    with st.chat_message(message["role"]):
-        st.markdown(message["content"])
-
-
-# ── Chat input ────────────────────────────────────────────────────────────────
-if prompt := st.chat_input("Ask about Sanket's background, skills, or experience..."):
-    st.session_state.messages.append({"role": "user", "content": prompt})
-    with st.chat_message("user"):
-        st.markdown(prompt)
-
+# ── Response helper ───────────────────────────────────────────────────────────
+def _respond(question: str) -> None:
+    """Call the chain, display the answer, and append it to session state."""
     with st.chat_message("assistant"):
         with st.spinner("Thinking..."):
             try:
-                result = st.session_state.chain.invoke({"question": prompt})
+                result = st.session_state.chain.invoke({"question": question})
                 answer = result["answer"]
                 source_docs = result.get("source_documents", [])
 
@@ -333,7 +295,10 @@ if prompt := st.chat_input("Ask about Sanket's background, skills, or experience
                         for i, doc in enumerate(source_docs, 1):
                             page = doc.metadata.get("page", 0)
                             st.caption(f"Chunk {i}  ·  page {page + 1}")
-                            st.text(doc.page_content[:300] + ("..." if len(doc.page_content) > 300 else ""))
+                            st.text(
+                                doc.page_content[:300]
+                                + ("..." if len(doc.page_content) > 300 else "")
+                            )
                             if i < len(source_docs):
                                 st.divider()
 
@@ -351,3 +316,53 @@ if prompt := st.chat_input("Ask about Sanket's background, skills, or experience
                     msg = f"Something went wrong: {exc}"
                 st.error(msg)
                 st.session_state.messages.append({"role": "assistant", "content": msg})
+
+
+# ── Hero banner ───────────────────────────────────────────────────────────────
+st.markdown("""
+<div class="hero">
+    <p class="hero-name">Ask me about Sanket</p>
+    <p class="hero-sub">
+        I'm an AI trained on Sanket's resume. Ask about his work experience,
+        technical skills, projects, or education.
+    </p>
+</div>
+""", unsafe_allow_html=True)
+
+
+# ── Suggestion buttons (only when conversation is empty) ──────────────────────
+if not st.session_state.messages:
+    col1, col2 = st.columns(2)
+    suggestions = [
+        "Where does Sanket currently work?",
+        "What AI/ML skills does he have?",
+        "Tell me about his notable projects",
+        "What certifications does he hold?",
+    ]
+    for i, suggestion in enumerate(suggestions):
+        col = col1 if i % 2 == 0 else col2
+        if col.button(suggestion, key=f"s{i}", use_container_width=True):
+            # Store the question and rerun — _respond() will pick it up below
+            st.session_state.messages.append({"role": "user", "content": suggestion})
+            st.rerun()
+    st.write("")
+
+
+# ── Render all stored messages ────────────────────────────────────────────────
+for message in st.session_state.messages:
+    with st.chat_message(message["role"]):
+        st.markdown(message["content"])
+
+
+# ── Auto-respond if last message is an unanswered user question ───────────────
+# This handles suggestion button clicks (which rerun without triggering chat_input)
+if st.session_state.messages and st.session_state.messages[-1]["role"] == "user":
+    _respond(st.session_state.messages[-1]["content"])
+
+
+# ── Chat input ────────────────────────────────────────────────────────────────
+if prompt := st.chat_input("Ask about Sanket's background, skills, or experience..."):
+    st.session_state.messages.append({"role": "user", "content": prompt})
+    with st.chat_message("user"):
+        st.markdown(prompt)
+    _respond(prompt)
