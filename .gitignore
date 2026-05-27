@@ -1,0 +1,52 @@
+# Virtual environment
+venv/
+.venv/
+ENV/
+env/
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+# .env.example is intentionally committed
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.pyc
+
+# ChromaDB local storage
+chromadb_data/
+
+# macOS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Pytest / coverage
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Build artifacts
+dist/
+build/
+*.egg-info/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Logs
+*.log
+logs/
+
+# Model cache (sentence-transformers downloads)
+# These are in ~/.cache by default, but just in case
+models/
