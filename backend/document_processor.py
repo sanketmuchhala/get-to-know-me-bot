@@ -54,6 +54,10 @@ def load_resume(resume_path: str = None) -> List[Document]:
     pages: List[Document] = []
     for page_num, page in enumerate(reader.pages):
         text = page.extract_text() or ""
+        # Normalize: collapse multiple spaces/newlines from PDF extraction
+        import re
+        text = re.sub(r" {2,}", " ", text)       # "AI  /ML" → "AI /ML"
+        text = re.sub(r"\n{3,}", "\n\n", text)    # excessive blank lines → one
         text = text.strip()
         if text:
             pages.append(
@@ -75,8 +79,8 @@ def load_resume(resume_path: str = None) -> List[Document]:
 
 def chunk_documents(
     documents: List[Document],
-    chunk_size: int = 500,
-    chunk_overlap: int = 50,
+    chunk_size: int = 300,
+    chunk_overlap: int = 40,
 ) -> List[Document]:
     """
     Split documents into smaller overlapping chunks for embedding.

@@ -62,18 +62,18 @@ class ChatEngine:
 
     def __init__(self, api_key: str):
         llm = ChatGoogleGenerativeAI(
-            model="gemini-2.0-flash",
+            model="gemini-2.5-flash-lite",
             google_api_key=api_key,
             temperature=0.2,
             max_retries=1,        # fail fast — don't retry for 5 minutes
             convert_system_message_to_human=True,
         )
 
+        # Load the full resume context once at startup (~1500 tokens — fits easily).
+        # We skip retrieval entirely so no chunk is ever missed.
         vectorstore = load_vector_store()
-        self._retriever = vectorstore.as_retriever(
-            search_type="similarity",
-            search_kwargs={"k": 3},
-        )
+        all_docs = vectorstore._collection.get()["documents"]
+        self._full_context = "\n\n".join(all_docs)
 
         self._chain = _PROMPT | llm | StrOutputParser()
 
@@ -94,18 +94,14 @@ class ChatEngine:
             elif msg["role"] == "assistant":
                 lc_history.append(AIMessage(content=msg["content"]))
 
-        # Retrieve relevant resume chunks
-        source_docs = self._retriever.invoke(question)
-        context = "\n\n".join(doc.page_content for doc in source_docs)
-
-        # Single LLM call
+        # Single LLM call — full resume in context, nothing can be missed
         answer = self._chain.invoke({
             "question": question,
             "chat_history": lc_history,
-            "context": context,
+            "context": self._full_context,
         })
 
-        return {"answer": answer, "source_documents": source_docs}
+        return {"answer": answer, "source_documents": []}
 
 
 # ── Factory ───────────────────────────────────────────────────────────────────
